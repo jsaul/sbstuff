@@ -14,19 +14,10 @@ def readFilesAsStream(pattern):
     return stream
 
 
-# Read one day of data from a previously downloaded file
-files = "2023-05-05-GE.FLT1..BH.mseed"
-stream = readFilesAsStream(files)
-
-# There is a known P pick around that time
-tp = obspy.core.UTCDateTime("2023-05-05T05:54:07.59")
-# Trim the stream to just work on a small snippet.
-stream.trim(tp-60, tp+60)
-
-model = seisbench.models.EQTransformer.from_pretrained('geofon')
-annotations = model.annotate(stream)
-
-for annotation in annotations:
+def annotationToPicks(annotation, label):
+    """
+    For the time being just prints the picks found in annotation function.
+    """
     meta = annotation.meta
 
     net = meta.network
@@ -34,20 +25,12 @@ for annotation in annotations:
     loc = meta.location
     cha = meta.channel  # nothing to do with SEED conventions!
 
-    if meta.channel.endswith("_Detection"):
-        flag = "D"
-    elif meta.channel.endswith("_P"):
-        flag = "P"
-    elif meta.channel.endswith("_S"):
-        flag = "S"
-    else:
-        flag = "X"
-
+    # only interested in P and S
+    flag = cha[-1] if cha[-2] == "_" else "X"
     if flag not in ["P", "S"]:
-        continue
+        return
 
-    nsl = "%(network)s.%(station)s.%(location)s" % meta
-    annotation.write("annotation-%s-%s.sac" % (nsl, flag), format="SAC")
+    annotation.write("annotation-%s-%s.sac" % (flag, label), format="SAC")
 
     data = annotation.data.astype(np.double)
     times = annotation.times()
@@ -57,3 +40,32 @@ for annotation in annotations:
         confidence = data[peak]
         print("%-2s %-5s %-2s   %s   %s %.3f" % (
             net, sta, loc, flag, str(picktime)[:23]+"Z", confidence))
+
+
+# Read one day of data from a previously downloaded file
+files = "2023-05-05-GE.FLT1..BH.mseed"
+whole = readFilesAsStream(files)
+stream = whole.copy()
+
+model = seisbench.models.EQTransformer.from_pretrained('geofon', update=True)
+
+for label in ['long', 'short-good', 'short-strange']:
+    if label == 'short-good':
+        # There is an very clear and impulsive P pick around that time
+        tp = obspy.core.UTCDateTime("2023-05-05T05:54:07.59")
+        # Trim the stream to just work on a small snippet.
+        stream = whole.copy()
+        stream.trim(tp-60, tp+60)
+        # This yields a sharp peak with amplitude of around 0.76
+
+    if label == 'short-strange':
+        # Whereas there is no plausible pick around this time
+        tp = obspy.core.UTCDateTime("2023-05-05T05:49:41.5")
+        stream = whole.copy()
+        stream.trim(tp-60, tp+60)
+        # Strangely this also yields a sharp peak with amplitude of around 0.76
+
+    annotations = model.annotate(stream)
+
+    for annotation in annotations:
+        annotationToPicks(annotation, label)
